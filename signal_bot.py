@@ -17,10 +17,6 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-# Binance API Configuration (add to .env later)
-BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
-BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
-
 # Strategy Parameters
 TOP_SYMBOLS = 50
 TIMEFRAME = "1h"
@@ -36,7 +32,8 @@ SUPERTREND_MULTIPLIER = 3
 
 class BinanceSignalBot:
     def __init__(self):
-        self.client = Client(BINANCE_API_KEY, BINANCE_API_SECRET)
+        # Use public client (no API key required)
+        self.client = Client()
         self.signals = []
 
     def send_telegram_alert(self, message):
@@ -57,7 +54,7 @@ class BinanceSignalBot:
             print(f"Error sending Telegram alert: {e}")
 
     def get_top_symbols(self):
-        """Fetch top 50 symbols by 24h volume"""
+        """Fetch top 50 symbols by 24h volume (public data)"""
         try:
             tickers = self.client.get_ticker()
             # Filter USDT pairs and sort by 24h volume
@@ -71,7 +68,7 @@ class BinanceSignalBot:
             return []
 
     def get_klines(self, symbol, interval, limit=200):
-        """Fetch candle data from Binance"""
+        """Fetch candle data from Binance (public data)"""
         try:
             klines = self.client.get_klines(symbol=symbol, interval=interval, limit=limit)
             df = pd.DataFrame(klines, columns=[
@@ -167,7 +164,7 @@ class BinanceSignalBot:
             current_volume > volume_ma_5):  # Volume confirmation
             
             signal = "LONG"
-            reason = f"EMA bullish, Close>${{close:.2f}} > VWAP${{{vwap:.2f}}}, Supertrend↑, RSI:{rsi:.1f}, Vol confirmed"
+            reason = f"EMA bullish, Close${{{close:.2f}}} > VWAP${{{vwap:.2f}}}, Supertrend↑, RSI:{rsi:.1f}, Vol confirmed"
 
         # SELL Signal - Trend Following (Short)
         elif (ema_7 < ema_25 < ema_99 and  # EMA alignment bearish
