@@ -1,4 +1,4 @@
-name: Binance Trading Signals
+name: Binance Trading Signals - Debug Test
 
 on:
   schedule:
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  trading-signals:
+  trading-signals-debug:
     runs-on: ubuntu-latest
     
     steps:
@@ -34,9 +34,23 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       
-      - name: Run trading signal bot
+      - name: Run trading signal bot with debug output
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          python signal_bot.py
+          bash run_bot.sh
+      
+      - name: Display output file
+        if: always()
+        run: |
+          echo "=== Trading Signal Bot Output ==="
+          cat signal_bot_output.txt || echo "Output file not found"
+      
+      - name: Upload output as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trading-signals-debug-output
+          path: signal_bot_output.txt
+          retention-days: 7
