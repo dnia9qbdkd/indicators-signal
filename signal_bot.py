@@ -29,16 +29,43 @@ VOLUME_PERIODS = [5, 10]
 SUPERTREND_PERIOD = 10
 SUPERTREND_MULTIPLIER = 3
 
+# Debug Configuration
+DEBUG_FILE = "debug.txt"
+
+
+class DebugLogger:
+    """Helper class to log debug information to file and console"""
+    def __init__(self, filename="debug.txt"):
+        self.filename = filename
+        self.log(f"\n{'='*80}")
+        self.log(f"Debug Session Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        self.log(f"{'='*80}\n")
+
+    def log(self, message):
+        """Log message to both file and console"""
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        log_message = f"[{timestamp}] {message}"
+        print(log_message)
+        with open(self.filename, 'a') as f:
+            f.write(log_message + "\n")
+
+
+debug = DebugLogger(DEBUG_FILE)
+
 
 class BinanceSignalBot:
     def __init__(self):
         # Use public client (no API key required)
         self.client = Client()
         self.signals = []
+        debug.log("[INIT] BinanceSignalBot initialized")
 
     def send_telegram_alert(self, message):
         """Send alert to Telegram"""
+        debug.log(f"[TELEGRAM] Attempting to send alert: {message[:50]}...")
+        
         if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+            debug.log("[TELEGRAM] No credentials found. Telegram disabled.")
             print(f"[ALERT] {message}")
             return
 
@@ -49,28 +76,44 @@ class BinanceSignalBot:
             "parse_mode": "HTML"
         }
         try:
-            requests.post(url, data=payload, timeout=10)
+            response = requests.post(url, data=payload, timeout=10)
+            debug.log(f"[TELEGRAM] Alert sent successfully. Status: {response.status_code}")
         except Exception as e:
-            print(f"Error sending Telegram alert: {e}")
+            debug.log(f"[TELEGRAM] Error sending alert: {e}")
 
     def get_top_symbols(self):
         """Fetch top 50 symbols by 24h volume (public data)"""
+        debug.log("[GET_TOP_SYMBOLS] Starting symbol fetch...")
         try:
             tickers = self.client.get_ticker()
+            debug.log(f"[GET_TOP_SYMBOLS] Retrieved {len(tickers)} total tickers")
+            
             # Filter USDT pairs and sort by 24h volume
             usdt_pairs = [t for t in tickers if t['symbol'].endswith('USDT')]
+            debug.log(f"[GET_TOP_SYMBOLS] Found {len(usdt_pairs)} USDT pairs")
+            
             sorted_pairs = sorted(usdt_pairs, key=lambda x: float(x['quoteAssetVolume']), reverse=True)
             symbols = [t['symbol'] for t in sorted_pairs[:TOP_SYMBOLS]]
+            debug.log(f"[GET_TOP_SYMBOLS] Selected top {len(symbols)} symbols by volume")
+            debug.log(f"[GET_TOP_SYMBOLS] Top 5 symbols: {symbols[:5]}")
+            
             print(f"Fetched {len(symbols)} top symbols by 24h volume")
             return symbols
         except BinanceAPIException as e:
+            debug.log(f"[GET_TOP_SYMBOLS] BinanceAPIException: {e}")
             print(f"Error fetching symbols: {e}")
+            return []
+        except Exception as e:
+            debug.log(f"[GET_TOP_SYMBOLS] Unexpected error: {e}")
             return []
 
     def get_klines(self, symbol, interval, limit=200):
         """Fetch candle data from Binance (public data)"""
+        debug.log(f"[GET_KLINES] Fetching {limit} candles for {symbol} with interval {interval}")
         try:
             klines = self.client.get_klines(symbol=symbol, interval=interval, limit=limit)
+            debug.log(f"[GET_KLINES] Retrieved {len(klines)} klines for {symbol}")
+            
             df = pd.DataFrame(klines, columns=[
                 'timestamp', 'open', 'high', 'low', 'close', 'volume',
                 'close_time', 'quote_asset_volume', 'number_of_trades',
@@ -84,27 +127,41 @@ class BinanceSignalBot:
             df['close'] = df['close'].astype(float)
             df['volume'] = df['volume'].astype(float)
             
+            debug.log(f"[GET_KLINES] {symbol} - First: {df.iloc[0]['timestamp']}, Last: {df.iloc[-1]['timestamp']}")
+            debug.log(f"[GET_KLINES] {symbol} - Price range: {df['low'].min():.8f} - {df['high'].max():.8f}")
+            debug.log(f"[GET_KLINES] {symbol} - Volume avg: {df['volume'].mean():.2f}")
+            
             return df
         except BinanceAPIException as e:
+            debug.log(f"[GET_KLINES] BinanceAPIException for {symbol}: {e}")
             print(f"Error fetching klines for {symbol}: {e}")
+            return None
+        except Exception as e:
+            debug.log(f"[GET_KLINES] Unexpected error for {symbol}: {e}")
             return None
 
     def calculate_indicators(self, df):
         """Calculate all technical indicators"""
+        debug.log(f"[CALC_INDICATORS] Starting indicator calculation with {len(df)} rows")
+        
         if df is None or len(df) < 100:
+            debug.log(f"[CALC_INDICATORS] Insufficient data: {len(df) if df is not None else 0} rows < 100 required")
             return None
 
         try:
             # EMA Indicators
             for period in EMA_PERIODS:
                 df[f'ema_{period}'] = EMAIndicator(close=df['close'], window=period).ema_indicator()
+                debug.log(f"[CALC_INDICATORS] EMA({period}) calculated - Latest: {df[f'ema_{period}'].iloc[-1]:.8f}")
 
             # RSI Indicator
             df['rsi_6'] = RSIIndicator(close=df['close'], window=RSI_PERIOD).rsi()
+            debug.log(f"[CALC_INDICATORS] RSI(6) calculated - Latest: {df['rsi_6'].iloc[-1]:.2f}")
 
             # Volume indicators
             for period in VOLUME_PERIODS:
                 df[f'volume_ma_{period}'] = df['volume'].rolling(window=period).mean()
+                debug.log(f"[CALC_INDICATORS] Volume MA({period}) calculated - Latest: {df[f'volume_ma_{period}'].iloc[-1]:.2f}")
 
             # Supertrend
             supertrend = SuperTrend(
@@ -116,6 +173,7 @@ class BinanceSignalBot:
             )
             df['supertrend'] = supertrend.supertrendl()
             df['supertrend_direction'] = supertrend.supertrendli()
+            debug.log(f"[CALC_INDICATORS] SuperTrend calculated - Direction: {df['supertrend_direction'].iloc[-1]:.2f}")
 
             # VWAP
             df['vwap'] = VolumeWeightedAveragePrice(
@@ -125,15 +183,21 @@ class BinanceSignalBot:
                 volume=df['volume'],
                 window=14
             ).volume_weighted_average_price()
-
+            debug.log(f"[CALC_INDICATORS] VWAP calculated - Latest: {df['vwap'].iloc[-1]:.8f}")
+            
+            debug.log(f"[CALC_INDICATORS] All indicators calculated successfully")
             return df
         except Exception as e:
+            debug.log(f"[CALC_INDICATORS] Error: {e}")
             print(f"Error calculating indicators: {e}")
             return None
 
     def generate_signals(self, symbol, df):
         """Generate BUY/SELL signals based on trend following strategy"""
+        debug.log(f"[GENERATE_SIGNALS] Processing {symbol}")
+        
         if df is None or len(df) < 2:
+            debug.log(f"[GENERATE_SIGNALS] Invalid data for {symbol}")
             return None
 
         latest = df.iloc[-1]
@@ -156,6 +220,12 @@ class BinanceSignalBot:
         signal = None
         reason = ""
 
+        # Debug: Log all indicator values
+        debug.log(f"[GENERATE_SIGNALS] {symbol} - EMA: 7={ema_7:.8f}, 25={ema_25:.8f}, 99={ema_99:.8f}")
+        debug.log(f"[GENERATE_SIGNALS] {symbol} - Price: {close:.8f}, VWAP: {vwap:.8f}, Diff: {close - vwap:.8f}")
+        debug.log(f"[GENERATE_SIGNALS] {symbol} - RSI: {rsi:.2f}, SuperTrend: {supertrend_dir:.2f}")
+        debug.log(f"[GENERATE_SIGNALS] {symbol} - Volume: {current_volume:.2f}, MA5: {volume_ma_5:.2f}, MA10: {volume_ma_10:.2f}")
+
         # BUY Signal - Trend Following (Long)
         if (ema_7 > ema_25 > ema_99 and  # EMA alignment bullish
             close > vwap and  # Price above VWAP
@@ -165,6 +235,7 @@ class BinanceSignalBot:
             
             signal = "LONG"
             reason = f"EMA bullish, Close${{{close:.2f}}} > VWAP${{{vwap:.2f}}}, Supertrend↑, RSI:{rsi:.1f}, Vol confirmed"
+            debug.log(f"[GENERATE_SIGNALS] ✓ BUY SIGNAL for {symbol}: {reason}")
 
         # SELL Signal - Trend Following (Short)
         elif (ema_7 < ema_25 < ema_99 and  # EMA alignment bearish
@@ -175,17 +246,22 @@ class BinanceSignalBot:
             
             signal = "SHORT"
             reason = f"EMA bearish, Close${{{close:.2f}}} < VWAP${{{vwap:.2f}}}, Supertrend↓, RSI:{rsi:.1f}, Vol confirmed"
+            debug.log(f"[GENERATE_SIGNALS] ✓ SELL SIGNAL for {symbol}: {reason}")
+        else:
+            debug.log(f"[GENERATE_SIGNALS] ✗ NO SIGNAL for {symbol} - Conditions not met")
 
         return {"symbol": symbol, "signal": signal, "reason": reason}
 
     def run_scan(self):
         """Run trading signal scan on all top symbols"""
+        debug.log(f"\n[RUN_SCAN] Scan started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"\n{'='*60}")
         print(f"Scan started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'='*60}")
 
         symbols = self.get_top_symbols()
         if not symbols:
+            debug.log("[RUN_SCAN] No symbols fetched. Exiting...")
             print("No symbols fetched. Exiting...")
             return
 
@@ -193,17 +269,20 @@ class BinanceSignalBot:
         sell_signals = []
 
         for i, symbol in enumerate(symbols, 1):
+            debug.log(f"[RUN_SCAN] [{i}/{len(symbols)}] Analyzing {symbol}...")
             print(f"[{i}/{len(symbols)}] Analyzing {symbol}...", end=" ")
 
             # Fetch data
             df = self.get_klines(symbol, Client.KLINE_INTERVAL_1HOUR, limit=200)
             if df is None:
+                debug.log(f"[RUN_SCAN] {symbol} - Failed to fetch klines")
                 print("SKIP")
                 continue
 
             # Calculate indicators
             df = self.calculate_indicators(df)
             if df is None:
+                debug.log(f"[RUN_SCAN] {symbol} - Failed to calculate indicators")
                 print("SKIP")
                 continue
 
@@ -221,36 +300,48 @@ class BinanceSignalBot:
             time.sleep(0.1)  # Rate limiting
 
         # Send alerts
+        debug.log(f"\n[RUN_SCAN] Scan Results Summary:")
+        debug.log(f"[RUN_SCAN] Buy Signals: {len(buy_signals)}, Sell Signals: {len(sell_signals)}")
+        
         print(f"\n{'='*60}")
         print(f"SCAN RESULTS")
         print(f"{'='*60}")
 
         if buy_signals:
+            debug.log(f"[RUN_SCAN] Processing {len(buy_signals)} BUY signals")
             print(f"\n🟢 BUY SIGNALS ({len(buy_signals)}):")
             for sig in buy_signals:
                 message = f"🟢 <b>BUY SIGNAL</b>\n<b>{sig['symbol']}</b>\n{sig['reason']}"
                 print(f"  {sig['symbol']}: {sig['reason']}")
+                debug.log(f"[RUN_SCAN] Sending BUY alert for {sig['symbol']}")
                 self.send_telegram_alert(message)
 
         if sell_signals:
+            debug.log(f"[RUN_SCAN] Processing {len(sell_signals)} SELL signals")
             print(f"\n🔴 SELL SIGNALS ({len(sell_signals)}):")
             for sig in sell_signals:
                 message = f"🔴 <b>SELL SIGNAL</b>\n<b>{sig['symbol']}</b>\n{sig['reason']}"
                 print(f"  {sig['symbol']}: {sig['reason']}")
+                debug.log(f"[RUN_SCAN] Sending SELL alert for {sig['symbol']}")
                 self.send_telegram_alert(message)
 
         if not buy_signals and not sell_signals:
+            debug.log(f"[RUN_SCAN] No signals detected")
             print("\n⚪ NO SIGNALS - No trading opportunities detected")
 
+        debug.log(f"[RUN_SCAN] Scan completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"\nScan completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 
 def main():
     """Main entry point"""
+    debug.log("[MAIN] Application started")
     bot = BinanceSignalBot()
 
     # Run once
     bot.run_scan()
+    
+    debug.log("[MAIN] Application completed")
 
     # For continuous monitoring, uncomment below:
     # while True:
