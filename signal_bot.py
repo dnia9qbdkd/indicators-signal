@@ -31,6 +31,7 @@ SUPERTREND_MULTIPLIER = 3
 
 # Debug Configuration
 DEBUG_FILE = "debug.txt"
+SIGNALS_FILE = "signals.txt"
 
 
 class DebugLogger:
@@ -50,7 +51,39 @@ class DebugLogger:
             f.write(log_message + "\n")
 
 
+class SignalsLogger:
+    """Helper class to log trading signals to file"""
+    def __init__(self, filename=SIGNALS_FILE):
+        self.filename = filename
+        self.write_header()
+
+    def write_header(self):
+        """Write header to signals file"""
+        with open(self.filename, 'a') as f:
+            f.write(f"\n{'='*80}\n")
+            f.write(f"Trading Signals - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"{'='*80}\n")
+
+    def log_signal(self, signal_type, symbol, reason):
+        """Log a trading signal"""
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        signal_emoji = "🟢 BUY" if signal_type == "LONG" else "🔴 SELL"
+        log_entry = f"[{timestamp}] {signal_emoji} | {symbol} | {reason}"
+        
+        with open(self.filename, 'a') as f:
+            f.write(log_entry + "\n")
+
+    def log_summary(self, buy_count, sell_count):
+        """Log scan summary"""
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        summary = f"\n[{timestamp}] SUMMARY: {buy_count} BUY signals, {sell_count} SELL signals\n"
+        
+        with open(self.filename, 'a') as f:
+            f.write(summary)
+
+
 debug = DebugLogger(DEBUG_FILE)
+signals_logger = SignalsLogger(SIGNALS_FILE)
 
 
 class BinanceSignalBot:
@@ -58,16 +91,20 @@ class BinanceSignalBot:
         # Use public client (no API key required)
         self.client = Client()
         self.signals = []
+        self.telegram_enabled = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
         debug.log("[INIT] BinanceSignalBot initialized")
+        if not self.telegram_enabled:
+            debug.log("[INIT] ⚠️  Telegram disabled - signals will be logged to signals.txt")
+        else:
+            debug.log("[INIT] ✓ Telegram enabled - alerts will be sent")
 
     def send_telegram_alert(self, message):
-        """Send alert to Telegram"""
+        """Send alert to Telegram or log to file"""
         debug.log(f"[TELEGRAM] Attempting to send alert: {message[:50]}...")
         
-        if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-            debug.log("[TELEGRAM] No credentials found. Telegram disabled.")
-            print(f"[ALERT] {message}")
-            return
+        if not self.telegram_enabled:
+            debug.log("[TELEGRAM] No Telegram credentials - alert logged to file only")
+            return False
 
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {
@@ -78,8 +115,10 @@ class BinanceSignalBot:
         try:
             response = requests.post(url, data=payload, timeout=10)
             debug.log(f"[TELEGRAM] Alert sent successfully. Status: {response.status_code}")
+            return True
         except Exception as e:
             debug.log(f"[TELEGRAM] Error sending alert: {e}")
+            return False
 
     def get_top_symbols(self):
         """Fetch top 50 symbols by 24h volume (public data)"""
@@ -257,6 +296,10 @@ class BinanceSignalBot:
         debug.log(f"\n[RUN_SCAN] Scan started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"\n{'='*60}")
         print(f"Scan started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        if not self.telegram_enabled:
+            print("📝 Signals will be saved to signals.txt")
+        else:
+            print("📨 Signals will be sent via Telegram")
         print(f"{'='*60}")
 
         symbols = self.get_top_symbols()
@@ -315,6 +358,8 @@ class BinanceSignalBot:
                 print(f"  {sig['symbol']}: {sig['reason']}")
                 debug.log(f"[RUN_SCAN] Sending BUY alert for {sig['symbol']}")
                 self.send_telegram_alert(message)
+                # Always log to file as well
+                signals_logger.log_signal("LONG", sig['symbol'], sig['reason'])
 
         if sell_signals:
             debug.log(f"[RUN_SCAN] Processing {len(sell_signals)} SELL signals")
@@ -324,10 +369,15 @@ class BinanceSignalBot:
                 print(f"  {sig['symbol']}: {sig['reason']}")
                 debug.log(f"[RUN_SCAN] Sending SELL alert for {sig['symbol']}")
                 self.send_telegram_alert(message)
+                # Always log to file as well
+                signals_logger.log_signal("SHORT", sig['symbol'], sig['reason'])
 
         if not buy_signals and not sell_signals:
             debug.log(f"[RUN_SCAN] No signals detected")
             print("\n⚪ NO SIGNALS - No trading opportunities detected")
+
+        # Log summary to signals file
+        signals_logger.log_summary(len(buy_signals), len(sell_signals))
 
         debug.log(f"[RUN_SCAN] Scan completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"\nScan completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
