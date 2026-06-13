@@ -26,9 +26,9 @@ A **Binance trading signal bot** that analyzes the top 50 cryptocurrencies hourl
 ```bash
 git clone https://github.com/dnia9qbdkd/indicators-signal.git
 cd indicators-signal
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -U -r requirements.txt
 ```
 
 ### 2. Configure (Optional - Telegram)
@@ -45,7 +45,7 @@ TELEGRAM_CHAT_ID=your_chat_id_here
 ### 3. Run
 
 ```bash
-python signal_bot.py
+python3 signal_bot.py
 ```
 
 Or use the shell script:
